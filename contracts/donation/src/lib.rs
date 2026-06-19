@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{Address, Env, IntoVal, Map, Symbol, Vec, contract, contractimpl, contracttype, symbol_short, vec};
+use soroban_sdk::{Address, Env, IntoVal, Map, Symbol, Vec, contract, contractimpl, contracttype, symbol_short, token, vec as soroban_vec};
 
 // Storage keys
 const DONATION_MAP: Symbol = symbol_short!("DON_MAP");
@@ -8,6 +8,7 @@ const CAMPAIGN_TOTALS: Symbol = symbol_short!("CMP_TOT");
 const DONOR_HISTORY: Symbol = symbol_short!("DON_HIS");
 const DONATION_COUNT: Symbol = symbol_short!("DON_CNT");
 const CAMPAIGN_CONTRACT_ID: Symbol = symbol_short!("CMP_CID");
+const TOKEN_ID: Symbol = symbol_short!("TOKEN_ID");
 const PAUSED: Symbol = symbol_short!("PAUSED");
 const ADMIN: Symbol = symbol_short!("ADMIN");
 
@@ -63,17 +64,13 @@ pub struct DonationContract;
 
 #[contractimpl]
 impl DonationContract {
-    /// Initialize the donation contract with Campaign contract ID and admin address
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `campaign_contract_id` - The contract ID of the Campaign contract
-    /// * `admin` - The admin allowed to pause/unpause the contract
-    pub fn initialize(env: Env, campaign_contract_id: Address, admin: Address) {
+    /// Initialize the donation contract with Campaign contract ID, token ID, and admin address
+    pub fn initialize(env: Env, campaign_contract_id: Address, token_id: Address, admin: Address) {
         if env.storage().instance().has(&CAMPAIGN_CONTRACT_ID) {
             panic!("Donation contract instance is already initialized");
         }
         env.storage().instance().set(&CAMPAIGN_CONTRACT_ID, &campaign_contract_id);
+        env.storage().instance().set(&TOKEN_ID, &token_id);
         env.storage().instance().set(&ADMIN, &admin);
     }
 
@@ -137,6 +134,19 @@ impl DonationContract {
             .instance()
             .get(&CAMPAIGN_CONTRACT_ID)
             .unwrap_or_else(|| panic!("Campaign contract ID not set. Call initialize() first."));
+
+        let token_id: Address = env
+            .storage()
+            .instance()
+            .get(&TOKEN_ID)
+            .unwrap_or_else(|| panic!("Token ID not set. Call initialize() first."));
+
+        // Transfer XLM from donor to this contract
+        token::Client::new(&env, &token_id).transfer(
+            &donor,
+            &env.current_contract_address(),
+            &amount,
+        );
 
         // Validate the campaign exists and is active (status == 0)
         let campaign: (u64, Address, i128, u64, u32, u64) = env.invoke_contract(
@@ -209,6 +219,7 @@ impl DonationContract {
         env.invoke_contract::<()>(
             &campaign_contract_id,
             &Symbol::new(&env, "update_raised_amount"),
+            soroban_vec![&env, campaign_id.into_val(&env), amount.into_val(&env)],
             vec![
                 &env,
                 campaign_id.into_val(&env),
@@ -398,7 +409,7 @@ impl DonationContract {
 
 #[cfg(test)]
 mod test {
-    use soroban_sdk::{Address, Env, Map, Symbol, contract, contractimpl, symbol_short, testutils::Address as _};
+    use soroban_sdk::{Address, Env, Map, Symbol, contract, contractimpl, testutils::Address as _, token::Client as TokenClient};
     use crate::{DonationContract, DonationContractClient};
 
     const MOCK_CAMP_MAP: Symbol = symbol_short!("CMP_MAP");
@@ -452,10 +463,26 @@ mod test {
         }
     }
 
+    fn setup(env: &Env) -> (DonationContractClient, Address, Address) {
+        let mock_campaign_id = env.register_contract(None, MockCampaignContract);
+        let contract_id = env.register_contract(None, DonationContract);
+        let client = DonationContractClient::new(env, &contract_id);
+
+        // Register native token and mint to donor
+        let token_id = env.register_stellar_asset_contract_v2(Address::generate(env)).address();
+
+        let admin = Address::generate(env);
+        client.initialize(&mock_campaign_id, &token_id, &admin);
+
+        (client, token_id, admin)
+    }
+
     #[test]
     fn test_donate_and_get_total_raised() {
         let env = Env::default();
         env.mock_all_auths();
+
+        let (client, token_id, _admin) = setup(&env);
         
         // First, deploy a mock Campaign contract
         let mock_campaign_id = env.register_contract(None, MockCampaignContract);
@@ -474,6 +501,9 @@ mod test {
 
         let donor = Address::generate(&env);
         let amount = 100i128;
+
+        // Mint tokens to donor so transfer can succeed
+        TokenClient::new(&env, &token_id).mint(&donor, &amount);
 
         // Test donation
         client.donate(&donor, &campaign_id, &amount);
@@ -505,6 +535,8 @@ mod test {
     fn test_multiple_donations() {
         let env = Env::default();
         env.mock_all_auths();
+
+        let (client, token_id, _admin) = setup(&env);
         
         // First, deploy a mock Campaign contract
         let mock_campaign_id = env.register_contract(None, MockCampaignContract);
@@ -523,6 +555,9 @@ mod test {
 
         let donor1 = Address::generate(&env);
         let donor2 = Address::generate(&env);
+
+        TokenClient::new(&env, &token_id).mint(&donor1, &100i128);
+        TokenClient::new(&env, &token_id).mint(&donor2, &200i128);
 
         // First donation
         client.donate(&donor1, &campaign_id, &100i128);
@@ -552,6 +587,10 @@ mod test {
     fn test_donate_zero_amount() {
         let env = Env::default();
         env.mock_all_auths();
+
+        let (client, _, _) = setup(&env);
+        let donor = Address::generate(&env);
+        client.donate(&donor, &1u64, &0i128);
         
         let mock_campaign_id = env.register_contract(None, MockCampaignContract);
         let mock_client = MockCampaignContractClient::new(&env, &mock_campaign_id);
@@ -574,6 +613,10 @@ mod test {
     fn test_donate_negative_amount() {
         let env = Env::default();
         env.mock_all_auths();
+
+        let (client, _, _) = setup(&env);
+        let donor = Address::generate(&env);
+        client.donate(&donor, &1u64, &-100i128);
         
         let mock_campaign_id = env.register_contract(None, MockCampaignContract);
         let mock_client = MockCampaignContractClient::new(&env, &mock_campaign_id);
@@ -600,6 +643,7 @@ mod test {
         let client = DonationContractClient::new(&env, &contract_id);
 
         let donor = Address::generate(&env);
+        client.donate(&donor, &1u64, &100i128);
         let campaign_id = 1u64;
         let amount = 100i128;
         
@@ -610,13 +654,16 @@ mod test {
     #[should_panic(expected = "Donation contract instance is already initialized")]
     fn test_prevent_double_initialization() {
         let env = Env::default();
+        env.mock_all_auths();
+
         let mock_campaign_id = env.register_contract(None, MockCampaignContract);
         let contract_id = env.register_contract(None, DonationContract);
         let client = DonationContractClient::new(&env, &contract_id);
 
+        let token_id = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
         let admin = Address::generate(&env);
-        client.initialize(&mock_campaign_id, &admin);
-        client.initialize(&mock_campaign_id, &admin);
+        client.initialize(&mock_campaign_id, &token_id, &admin);
+        client.initialize(&mock_campaign_id, &token_id, &admin);
     }
 
     #[test]
@@ -625,12 +672,7 @@ mod test {
         let env = Env::default();
         env.mock_all_auths();
 
-        let mock_campaign_id = env.register_contract(None, MockCampaignContract);
-        let contract_id = env.register_contract(None, DonationContract);
-        let client = DonationContractClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.initialize(&mock_campaign_id, &admin);
+        let (client, _, admin) = setup(&env);
         client.pause(&admin);
 
         let donor = Address::generate(&env);
@@ -642,6 +684,7 @@ mod test {
         let env = Env::default();
         env.mock_all_auths();
 
+        let (client, token_id, admin) = setup(&env);
         let mock_campaign_id = env.register_contract(None, MockCampaignContract);
         let mock_client = MockCampaignContractClient::new(&env, &mock_campaign_id);
         let contract_id = env.register_contract(None, DonationContract);
@@ -656,6 +699,7 @@ mod test {
         client.unpause(&admin);
 
         let donor = Address::generate(&env);
+        TokenClient::new(&env, &token_id).mint(&donor, &50i128);
         client.donate(&donor, &1u64, &50i128);
         assert_eq!(client.get_total_raised(&1u64), 50i128);
     }

@@ -15,7 +15,8 @@ RELEASE_FLAG ?= --release
 NETWORK ?= testnet
 CONTRACTS = donation-contract withdrawal-contract campaign-contract
 
-.PHONY: all help build build-contracts test deploy-testnet deploy-mainnet fmt lint clean
+.PHONY: all help build build-contracts bindings test deploy-testnet deploy-mainnet fmt lint clean
+
 
 all: build
 
@@ -25,6 +26,7 @@ help:
 	@echo "Available targets:"
 	@echo "  build              Build the entire workspace"
 	@echo "  build-contracts    Build all contract WASMs for Soroban"
+	@echo "  bindings           Generate Rust and TypeScript contract bindings"
 	@echo "  test               Run all tests (workspace + contracts)"
 	@echo "  deploy-testnet     Deploy contracts to Soroban testnet"
 	@echo "  deploy-mainnet     Deploy contracts to Soroban mainnet"
@@ -47,6 +49,52 @@ build-contracts:
 		cargo build -p $$contract --target $(WASM_TARGET) $(RELEASE_FLAG) || exit 1; \
 	done
 	@echo "All contracts built successfully"
+
+bindings:
+	@command -v soroban >/dev/null 2>&1 || (echo "soroban CLI not found; install via 'cargo install soroban-cli'"; exit 1)
+
+	@mkdir -p sdk/bindings/rust
+	@mkdir -p sdk/bindings/typescript
+
+	@test -n "$$DONATION_CONTRACT_ID" || (echo "DONATION_CONTRACT_ID is required" && exit 1)
+	@test -n "$$WITHDRAWAL_CONTRACT_ID" || (echo "WITHDRAWAL_CONTRACT_ID is required" && exit 1)
+	@test -n "$$CAMPAIGN_CONTRACT_ID" || (echo "CAMPAIGN_CONTRACT_ID is required" && exit 1)
+
+	@echo "Generating Rust bindings..."
+
+	soroban contract bindings rust \
+		--contract-id $$DONATION_CONTRACT_ID \
+		--network $(NETWORK) \
+		--output sdk/bindings/rust/donation.rs
+
+	soroban contract bindings rust \
+		--contract-id $$WITHDRAWAL_CONTRACT_ID \
+		--network $(NETWORK) \
+		--output sdk/bindings/rust/withdrawal.rs
+
+	soroban contract bindings rust \
+		--contract-id $$CAMPAIGN_CONTRACT_ID \
+		--network $(NETWORK) \
+		--output sdk/bindings/rust/campaign.rs
+
+	@echo "Generating TypeScript bindings..."
+
+	soroban contract bindings typescript \
+		--contract-id $$DONATION_CONTRACT_ID \
+		--network $(NETWORK) \
+		--output sdk/bindings/typescript/donation.ts
+
+	soroban contract bindings typescript \
+		--contract-id $$WITHDRAWAL_CONTRACT_ID \
+		--network $(NETWORK) \
+		--output sdk/bindings/typescript/withdrawal.ts
+
+	soroban contract bindings typescript \
+		--contract-id $$CAMPAIGN_CONTRACT_ID \
+		--network $(NETWORK) \
+		--output sdk/bindings/typescript/campaign.ts
+
+	@echo "Bindings generated successfully"
 
 deploy-testnet: build-contracts
 	@command -v soroban >/dev/null 2>&1 || (echo "soroban CLI not found; install via 'cargo install soroban-cli'"; exit 1)

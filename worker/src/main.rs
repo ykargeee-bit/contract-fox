@@ -3,7 +3,7 @@ mod logging;
 mod redaction;
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerConfig {
@@ -14,11 +14,11 @@ pub struct WorkerConfig {
 
 impl WorkerConfig {
     pub fn log_safe(&self) -> serde_json::Value {
-        serde_json::json!({
+        redaction::log_safe_config(&serde_json::json!({
             "rpc_url": self.rpc_url,
             "poll_interval": self.poll_interval,
             "network": self.network
-        })
+        }))
     }
 }
 

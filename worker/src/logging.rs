@@ -1,4 +1,5 @@
 use std::env;
+use std::str::FromStr;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
@@ -6,7 +7,7 @@ pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
 
     let filter_str = format!("worker={}", log_level);
     let env_filter =
-        EnvFilter::try_from_str(&filter_str).unwrap_or_else(|_| EnvFilter::new("worker=info"));
+        EnvFilter::from_str(&filter_str).unwrap_or_else(|_| EnvFilter::new("worker=info"));
 
     let is_production =
         env::var("RUST_ENV").unwrap_or_else(|_| "development".to_string()) == "production";

@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = []
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk = "20.5.0"
 contracts-shared = { path = "../shared" }

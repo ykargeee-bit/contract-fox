@@ -3,5 +3,9 @@ name = "contracts-shared"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk = "20.5.0"

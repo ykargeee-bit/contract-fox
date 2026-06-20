@@ -3,6 +3,7 @@ pub mod errors;
 
 pub mod friendbot;
 pub mod horizon;
+pub mod services;
 mod setup;
 pub mod utils;
 

@@ -8,6 +8,8 @@ pub struct Config {
     pub stellar_platform_secret: String,
     pub horizon_url: String,
     pub soroban_rpc_url: String,
+    /// Optional URL to POST `donation.confirmed` webhook events to.
+    pub webhook_url: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -28,6 +30,7 @@ impl Config {
             stellar_platform_secret: read_required_env("STELLAR_PLATFORM_SECRET")?,
             horizon_url: read_required_env("HORIZON_URL")?,
             soroban_rpc_url: read_required_env("SOROBAN_RPC_URL")?,
+            webhook_url: read_optional_env("WEBHOOK_URL"),
         })
     }
 }
@@ -40,4 +43,8 @@ fn read_required_env(name: &'static str) -> Result<String, ConfigError> {
     }
 
     Ok(value)
+}
+
+fn read_optional_env(name: &'static str) -> Option<String> {
+    env::var(name).ok().filter(|v| !v.trim().is_empty())
 }

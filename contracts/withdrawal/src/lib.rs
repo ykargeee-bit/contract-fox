@@ -1,11 +1,11 @@
 #![no_std]
 
-const PAUSED: Symbol = symbol_short!("PAUSED");
-const ADMIN: Symbol = symbol_short!("ADMIN");
-const TOKEN_ID: Symbol = symbol_short!("TOKEN_ID");
 use contracts_shared::Withdrawal;
 use soroban_sdk::{Address, Env, Map, String, Symbol, Vec, contract, contractimpl, contracttype, symbol_short, token};
 
+const PAUSED: Symbol = symbol_short!("PAUSED");
+const ADMIN: Symbol = symbol_short!("ADMIN");
+const TOKEN_ID: Symbol = symbol_short!("TOKEN_ID");
 const WITHDRAWAL_MAP: Symbol = symbol_short!("WDR_MAP");
 const WITHDRAWAL_COUNT: Symbol = symbol_short!("WDR_CNT");
 const CAMPAIGN_INDEX: Symbol = symbol_short!("CMP_IDX");
@@ -67,6 +67,13 @@ fn load_withdrawal(env: &Env, withdrawal_id: u64) -> StoredWithdrawal {
         .unwrap_or_else(|| panic!("Withdrawal not found"))
 }
 
+fn require_not_paused(env: &Env) {
+    let paused: bool = env.storage().instance().get(&PAUSED).unwrap_or(false);
+    if paused {
+        panic!("Contract is paused");
+    }
+}
+
 #[contract]
 pub struct WithdrawalContract;
 
@@ -80,6 +87,8 @@ impl WithdrawalContract {
             .set(&key, &(beneficiary, max_withdrawal));
         env.storage().instance().set(&TOKEN_ID, &token_id);
         env.storage().instance().set(&ADMIN, &admin);
+    }
+
     /// Request a withdrawal for a campaign; requires owner authorization
     pub fn request_withdrawal(
         env: Env,
@@ -216,9 +225,48 @@ impl WithdrawalContract {
         );
     }
 
-    /// Withdraw funds from the contract — verifies balance then transfers XLM to beneficiary
+    /// Withdraw funds from the contract — verifies balance then transfers to beneficiary
     pub fn withdraw(env: Env, amount: i128) -> bool {
         require_not_paused(&env);
+        if amount <= 0 {
+            panic!("Withdrawal amount must be positive");
+        }
+
+        let token_id: Address = env
+            .storage()
+            .instance()
+            .get(&TOKEN_ID)
+            .unwrap_or_else(|| panic!("Token ID not set. Call initialize() first."));
+
+        let settings: (Address, i128) = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "settings"))
+            .unwrap_or_else(|| panic!("Contract not initialized"));
+        let (beneficiary, max_withdrawal) = settings;
+
+        if amount > max_withdrawal {
+            return false;
+        }
+
+        let token_client = token::Client::new(&env, &token_id);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+
+        if contract_balance < amount {
+            return false;
+        }
+
+        token_client.transfer(&env.current_contract_address(), &beneficiary, &amount);
+
+        let withdrawn_key = Symbol::new(&env, "total_withdrawn");
+        let total: i128 = env.storage().instance().get(&withdrawn_key).unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&withdrawn_key, &(total + amount));
+
+        true
+    }
+
     /// Get a withdrawal by ID
     pub fn get_withdrawal(env: Env, withdrawal_id: u64) -> Withdrawal {
         stored_to_withdrawal(load_withdrawal(&env, withdrawal_id))
@@ -248,34 +296,61 @@ impl WithdrawalContract {
             }
         }
 
-        let token_id: Address = env
+        result
+    }
+
+    /// Get total withdrawn amount
+    pub fn get_total_withdrawn(env: Env) -> i128 {
+        let withdrawn_key = Symbol::new(&env, "total_withdrawn");
+        env.storage().instance().get(&withdrawn_key).unwrap_or(0)
+    }
+
+    /// Pause the contract; only the admin can call this
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
             .storage()
             .instance()
-            .get(&TOKEN_ID)
-            .unwrap_or_else(|| panic!("Token ID not set. Call initialize() first."));
-
-        let token_client = token::Client::new(&env, &token_id);
-        let contract_balance = token_client.balance(&env.current_contract_address());
-
-        if contract_balance < amount {
-            return false;
+            .get(&ADMIN)
+            .unwrap_or_else(|| panic!("Contract not initialized"));
+        if admin != stored_admin {
+            panic!("Unauthorized: caller is not admin");
         }
+        env.storage().instance().set(&PAUSED, &true);
+    }
 
-        token_client.transfer(&env.current_contract_address(), &beneficiary, &amount);
-
-        let withdrawn_key = Symbol::new(&env, "total_withdrawn");
-        let total: i128 = env.storage().instance().get(&withdrawn_key).unwrap_or(0);
-        env.storage()
+    /// Unpause the contract; only the admin can call this
+    pub fn unpause(env: Env, admin: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
             .instance()
-            .set(&withdrawn_key, &(total + amount));
-        result
+            .get(&ADMIN)
+            .unwrap_or_else(|| panic!("Contract not initialized"));
+        if admin != stored_admin {
+            panic!("Unauthorized: caller is not admin");
+        }
+        env.storage().instance().set(&PAUSED, &false);
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::Address as _, token::Client as TokenClient};
+
+    fn setup(env: &Env, max_withdrawal: i128) -> (WithdrawalContractClient, Address, Address, Address) {
+        let contract_id = env.register_contract(None, WithdrawalContract);
+        let client = WithdrawalContractClient::new(env, &contract_id);
+
+        let token_id = env.register_stellar_asset_contract_v2(Address::generate(env)).address();
+        let beneficiary = Address::generate(env);
+        let admin = Address::generate(env);
+
+        client.initialize(&beneficiary, &max_withdrawal, &token_id, &admin);
+
+        (client, token_id, beneficiary, admin)
+    }
 
     #[test]
     fn test_request_and_get_withdrawal() {
@@ -365,26 +440,6 @@ mod test {
         assert!(!withdrawal.approved);
     }
 
-}
-
-#[cfg(test)]
-mod test {
-    use soroban_sdk::{Address, Env, testutils::Address as _, token::Client as TokenClient};
-    use crate::{WithdrawalContract, WithdrawalContractClient};
-
-    fn setup(env: &Env, max_withdrawal: i128) -> (WithdrawalContractClient, Address, Address, Address) {
-        let contract_id = env.register_contract(None, WithdrawalContract);
-        let client = WithdrawalContractClient::new(env, &contract_id);
-
-        let token_id = env.register_stellar_asset_contract_v2(Address::generate(env)).address();
-        let beneficiary = Address::generate(env);
-        let admin = Address::generate(env);
-
-        client.initialize(&beneficiary, &max_withdrawal, &token_id, &admin);
-
-        (client, token_id, beneficiary, admin)
-    }
-
     #[test]
     fn test_withdraw_success() {
         let env = Env::default();
@@ -392,13 +447,11 @@ mod test {
 
         let (client, token_id, beneficiary, _admin) = setup(&env, 500i128);
 
-        // Fund the contract
         TokenClient::new(&env, &token_id).mint(&client.address, &300i128);
 
         assert!(client.withdraw(&200i128));
         assert_eq!(client.get_total_withdrawn(), 200i128);
 
-        // Beneficiary should have received the tokens
         assert_eq!(TokenClient::new(&env, &token_id).balance(&beneficiary), 200i128);
     }
 
@@ -411,7 +464,6 @@ mod test {
 
         TokenClient::new(&env, &token_id).mint(&client.address, &500i128);
 
-        // amount > max_withdrawal → returns false, no transfer
         assert!(!client.withdraw(&200i128));
         assert_eq!(client.get_total_withdrawn(), 0i128);
     }
@@ -423,7 +475,6 @@ mod test {
 
         let (client, token_id, _beneficiary, _admin) = setup(&env, 500i128);
 
-        // Only fund 50 tokens but try to withdraw 100
         TokenClient::new(&env, &token_id).mint(&client.address, &50i128);
 
         assert!(!client.withdraw(&100i128));

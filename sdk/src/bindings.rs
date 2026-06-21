@@ -1,11 +1,5 @@
-pub mod campaign {
-    include!("../bindings/rust/campaign.rs");
-}
+pub mod campaign {}
 
-pub mod donation {
-    include!("../bindings/rust/donation.rs");
-}
+pub mod donation {}
 
-pub mod withdrawal {
-    include!("../bindings/rust/withdrawal.rs");
-}
+pub mod withdrawal {}

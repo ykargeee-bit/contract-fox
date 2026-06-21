@@ -2,7 +2,7 @@
 
 use contracts_shared::{Campaign, CampaignStatus};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
+    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
 const CAMPAIGN_TTL_THRESHOLD_LEDGERS: u32 = 17280 * 7;
@@ -11,7 +11,6 @@ const CAMPAIGN_TTL_BUMP_LOCK_WINDOW_LEDGERS: u32 = 100;
 const PAUSED: Symbol = symbol_short!("PAUSED");
 const ADMIN: Symbol = symbol_short!("ADMIN");
 
-// Campaign status constants
 pub const CAMPAIGN_STATUS_ACTIVE: u32 = 0;
 pub const CAMPAIGN_STATUS_COMPLETED: u32 = 1;
 pub const CAMPAIGN_STATUS_CANCELLED: u32 = 2;
@@ -22,7 +21,6 @@ pub const CAMPAIGN_STATUS_EXPIRED: u32 = 3;
 enum DataKey {
     CampaignCount,
     Campaign(u64),
-    Raised(u64),
 }
 
 #[contracttype]
@@ -47,13 +45,6 @@ fn bump_campaign_ttl(env: &Env, campaign_id: u64) {
         CAMPAIGN_TTL_BUMP_TO_LEDGERS,
     );
 
-    let raised_key = DataKey::Raised(campaign_id);
-    env.storage().persistent().extend_ttl(
-        &raised_key,
-        CAMPAIGN_TTL_THRESHOLD_LEDGERS,
-        CAMPAIGN_TTL_BUMP_TO_LEDGERS,
-    );
-
     env.storage().temporary().set(&lock_key, &current_ledger);
 }
 
@@ -66,8 +57,6 @@ fn bump_campaign_index_ttl(env: &Env) {
     );
 }
 
-// --- Structured Events for Off-Chain Indexing ---
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CampaignRegisteredEvent {
@@ -75,6 +64,7 @@ pub struct CampaignRegisteredEvent {
     pub owner: Address,
     pub goal: i128,
     pub deadline: u64,
+    pub asset_contract_id: Option<Address>,
 }
 
 #[contracttype]
@@ -157,14 +147,14 @@ impl CampaignContract {
     /// * `owner` - The address of campaign owner
     /// * `goal` - The funding goal for campaign
     /// * `deadline` - The deadline timestamp for campaign
+    /// * `asset_contract_id` - Optional Soroban token contract ID (None for native XLM)
     ///
     /// # Returns
     /// The ID of newly created campaign
-    pub fn register_campaign(env: Env, owner: Address, goal: i128, deadline: u64) -> u64 {
+    pub fn register_campaign(env: Env, owner: Address, goal: i128, deadline: u64, asset_contract_id: Option<Address>) -> u64 {
         require_not_paused(&env);
         owner.require_auth();
 
-        // Get current campaign count and increment
         let mut count: u64 = env
             .storage()
             .persistent()
@@ -179,6 +169,7 @@ impl CampaignContract {
             raised: 0,
             status: CampaignStatus::Active,
             deadline,
+            asset_contract_id: asset_contract_id.clone(),
         };
 
         env.storage()
@@ -198,26 +189,7 @@ impl CampaignContract {
                 owner,
                 goal,
                 deadline,
-            },
-        );
-
-        count
-    }
-}
-
-        env.storage().persistent().set(&DataKey::Raised(count), &0i128);
-        env.storage().persistent().set(&DataKey::CampaignCount, &count);
-        bump_campaign_index_ttl(&env);
-        bump_campaign_ttl(&env, count);
-
-        // Emit Structured Event for Indexers
-        env.events().publish(
-            (Symbol::new(&env, "CampaignRegistered"), count),
-            CampaignRegisteredEvent {
-                campaign_id: count,
-                owner,
-                goal,
-                deadline,
+                asset_contract_id: asset_contract_id.clone(),
             },
         );
 
@@ -231,7 +203,7 @@ impl CampaignContract {
     /// * `campaign_id` - The ID of campaign to retrieve
     ///
     /// # Returns
-    /// The Campaign tuple if found
+    /// The Campaign struct if found
     pub fn get_campaign(env: Env, campaign_id: u64) -> Campaign {
         let campaign: Campaign = env
             .storage()
@@ -239,61 +211,43 @@ impl CampaignContract {
             .get(&DataKey::Campaign(campaign_id))
             .unwrap_or_else(|| panic!("Campaign not found"));
 
-        let (_, _, _, _, status, _) = &campaign;
-        if *status == CAMPAIGN_STATUS_ACTIVE {
+        if campaign.status == CampaignStatus::Active {
             bump_campaign_ttl(&env, campaign_id);
         }
 
         campaign
     }
 
-    pub fn update_campaign_status(env: Env, campaign_id: u64, status: CampaignStatus) {
     /// Update campaign status
     ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `campaign_id` - The ID of campaign to update
     /// * `status` - The new status for campaign
-    pub fn update_campaign_status(env: Env, campaign_id: u64, status: u32) {
+    pub fn update_campaign_status(env: Env, campaign_id: u64, status: CampaignStatus) {
         require_not_paused(&env);
+
         let campaign: Campaign = env
             .storage()
-            .instance()
-            .get(&CAMPAIGN_MAP)
-            .unwrap_or_else(|| panic!("No campaigns found"));
-
-        let mut campaign = campaigns
-            .get(campaign_id)
-            .unwrap_or_else(|| panic!("Campaign not found"));
-
-        campaign.owner.require_auth();
-
-        let old_status = campaign.status.clone();
-        campaign.status = status.clone();
-        campaigns.set(campaign_id, campaign);
-        env.storage().instance().set(&CAMPAIGN_MAP, &campaigns);
             .persistent()
             .get(&DataKey::Campaign(campaign_id))
             .unwrap_or_else(|| panic!("Campaign not found"));
 
-        // Extract campaign data
-        let (id, owner, goal, deadline, old_status, created_at) = campaign;
+        let old_status = campaign.status.clone();
 
-        // Only campaign owner can update status
-        owner.require_auth();
-
-        // Create updated campaign tuple
-        let updated_campaign: Campaign = (id, owner, goal, deadline, status, created_at);
+        let updated_campaign = Campaign {
+            status: status.clone(),
+            ..campaign.clone()
+        };
 
         env.storage()
             .persistent()
             .set(&DataKey::Campaign(campaign_id), &updated_campaign);
 
-        if status == CAMPAIGN_STATUS_ACTIVE {
+        if status == CampaignStatus::Active {
             bump_campaign_ttl(&env, campaign_id);
         }
 
-        // Emit Structured Event for Indexers
         env.events().publish(
             (Symbol::new(&env, "CampaignStatusUpdated"), campaign_id),
             CampaignStatusChangedEvent {
@@ -343,8 +297,7 @@ impl CampaignContract {
                 .persistent()
                 .get::<_, Campaign>(&DataKey::Campaign(campaign_id))
             {
-                let (_, _, _, _, status, _) = &campaign;
-                if *status == CAMPAIGN_STATUS_ACTIVE {
+                if campaign.status == CampaignStatus::Active {
                     bump_campaign_ttl(&env, campaign_id);
                 }
                 result.push_back(campaign);
@@ -366,41 +319,50 @@ impl CampaignContract {
             panic!("Amount must be positive");
         }
 
-        let mut campaigns: Map<u64, Campaign> = env
-        // Validate campaign exists before updating balances
         let campaign: Campaign = env
             .storage()
             .persistent()
             .get(&DataKey::Campaign(campaign_id))
             .unwrap_or_else(|| panic!("Campaign not found"));
 
-        let mut campaign = campaigns
-            .get(campaign_id)
-            .unwrap_or_else(|| panic!("Campaign not found"));
+        let updated_campaign = Campaign {
+            raised: campaign.raised + amount,
+            ..campaign
+        };
 
-        campaign.raised += amount;
-        campaigns.set(campaign_id, campaign);
-        env.storage().instance().set(&CAMPAIGN_MAP, &campaigns);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Campaign(campaign_id), &updated_campaign);
     }
 
+    /// Get raised amount for a campaign
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `campaign_id` - The ID of campaign
+    ///
+    /// # Returns
+    /// The total amount raised for the campaign
     pub fn get_raised_amount(env: Env, campaign_id: u64) -> i128 {
-        let campaigns: Map<u64, Campaign> = env
+        if let Some(campaign) = env
             .storage()
-            .instance()
-            .get(&CAMPAIGN_MAP)
-            .unwrap_or(Map::new(&env));
-
-        campaigns
-            .get(campaign_id)
-            .map(|c| c.raised)
-            .unwrap_or(0)
+            .persistent()
+            .get::<_, Campaign>(&DataKey::Campaign(campaign_id))
+        {
+            if campaign.status == CampaignStatus::Active {
+                bump_campaign_ttl(&env, campaign_id);
+            }
+            campaign.raised
+        } else {
+            0
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn test_register_and_get_campaign() {
@@ -417,7 +379,7 @@ mod test {
         let goal = 1000i128;
         let deadline = 1700000000u64;
 
-        let id = client.register_campaign(&owner, &goal, &deadline);
+        let id = client.register_campaign(&owner, &goal, &deadline, &None);
         assert_eq!(id, 1);
 
         let campaign = client.get_campaign(&id);
@@ -427,8 +389,32 @@ mod test {
         assert_eq!(campaign.raised, 0);
         assert_eq!(campaign.status, CampaignStatus::Active);
         assert_eq!(campaign.deadline, deadline);
+        assert_eq!(campaign.asset_contract_id, None);
 
         assert_eq!(client.get_campaign_count(), 1);
+    }
+
+    #[test]
+    fn test_register_campaign_with_custom_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, CampaignContract);
+        let client = CampaignContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let owner = Address::generate(&env);
+        let usdc_contract = Address::generate(&env);
+        let goal = 5000i128;
+        let deadline = 1800000000u64;
+
+        let id = client.register_campaign(&owner, &goal, &deadline, &Some(usdc_contract.clone()));
+        assert_eq!(id, 1);
+
+        let campaign = client.get_campaign(&id);
+        assert_eq!(campaign.asset_contract_id, Some(usdc_contract));
     }
 
     #[test]
@@ -443,7 +429,7 @@ mod test {
         client.initialize(&admin);
 
         let owner = Address::generate(&env);
-        let id = client.register_campaign(&owner, &1000i128, &1700000000u64);
+        let id = client.register_campaign(&owner, &1000i128, &1700000000u64, &None);
 
         client.update_campaign_status(&id, &CampaignStatus::Completed);
 
@@ -465,8 +451,8 @@ mod test {
         let owner1 = Address::generate(&env);
         let owner2 = Address::generate(&env);
 
-        let id1 = client.register_campaign(&owner1, &500i128, &1700000000u64);
-        let id2 = client.register_campaign(&owner2, &1000i128, &1800000000u64);
+        let id1 = client.register_campaign(&owner1, &500i128, &1700000000u64, &None);
+        let id2 = client.register_campaign(&owner2, &1000i128, &1800000000u64, &None);
 
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
@@ -488,7 +474,7 @@ mod test {
         client.initialize(&admin);
 
         let owner = Address::generate(&env);
-        let id = client.register_campaign(&owner, &1000i128, &1700000000u64);
+        let id = client.register_campaign(&owner, &1000i128, &1700000000u64, &None);
 
         client.update_raised_amount(&id, &250i128);
         assert_eq!(client.get_raised_amount(&id), 250);
@@ -539,7 +525,7 @@ mod test {
         client.initialize(&admin);
 
         let owner = Address::generate(&env);
-        let id = client.register_campaign(&owner, &1000i128, &1700000000u64);
+        let id = client.register_campaign(&owner, &1000i128, &1700000000u64, &None);
 
         client.update_raised_amount(&id, &0i128);
     }
@@ -558,7 +544,7 @@ mod test {
         client.pause(&admin);
 
         let owner = Address::generate(&env);
-        client.register_campaign(&owner, &1000i128, &1700000000u64);
+        client.register_campaign(&owner, &1000i128, &1700000000u64, &None);
     }
 
     #[test]
@@ -576,46 +562,7 @@ mod test {
         client.unpause(&admin);
 
         let owner = Address::generate(&env);
-        let id = client.register_campaign(&owner, &1000i128, &1700000000u64);
+        let id = client.register_campaign(&owner, &1000i128, &1700000000u64, &None);
         assert_eq!(id, 1);
-        let (_, _, _, _, status, _) = &campaign;
-        if *status == CAMPAIGN_STATUS_ACTIVE {
-            bump_campaign_ttl(&env, campaign_id);
-        }
-
-        let current_raised: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Raised(campaign_id))
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Raised(campaign_id), &(current_raised + amount));
-    }
-
-    /// Get raised amount for a campaign
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `campaign_id` - The ID of campaign
-    ///
-    /// # Returns
-    /// The total amount raised for the campaign
-    pub fn get_raised_amount(env: Env, campaign_id: u64) -> i128 {
-        if let Some(campaign) = env
-            .storage()
-            .persistent()
-            .get::<_, Campaign>(&DataKey::Campaign(campaign_id))
-        {
-            let (_, _, _, _, status, _) = &campaign;
-            if *status == CAMPAIGN_STATUS_ACTIVE {
-                bump_campaign_ttl(&env, campaign_id);
-            }
-        }
-
-        env.storage()
-            .persistent()
-            .get(&DataKey::Raised(campaign_id))
-            .unwrap_or(0)
     }
 }

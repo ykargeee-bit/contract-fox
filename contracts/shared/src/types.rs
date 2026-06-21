@@ -18,6 +18,7 @@ pub struct Campaign {
     pub raised: i128,
     pub status: CampaignStatus,
     pub deadline: u64,
+    pub asset_contract_id: Option<Address>,
 }
 
 #[contracttype]

@@ -64,8 +64,8 @@ impl DonationsRepo {
     pub fn save_donation(&self, donation: &NewDonation) -> Result<Donation, DbError> {
         self.conn.execute(
             "INSERT OR IGNORE INTO donations
-                (tx_hash, campaign_id, donor_address, donor_user_id, amount, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                (tx_hash, campaign_id, donor_address, donor_user_id, amount, status, memo, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
             params![
                 donation.tx_hash,
                 donation.campaign_id,
@@ -78,7 +78,7 @@ impl DonationsRepo {
         )?;
 
         let record = self.conn.query_row(
-            "SELECT id, tx_hash, campaign_id, donor_address, donor_user_id, amount, status, created_at
+            "SELECT id, tx_hash, campaign_id, donor_address, donor_user_id, amount, status, memo, created_at
              FROM donations WHERE tx_hash = ?1",
             params![donation.tx_hash],
             |row| {
@@ -90,7 +90,8 @@ impl DonationsRepo {
                     donor_user_id: row.get(4)?,
                     amount: row.get(5)?,
                     status: row.get(6)?,
-                    created_at: row.get(7)?,
+                    memo: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             },
         )?;
@@ -182,6 +183,7 @@ mod tests {
             donor_user_id: None,
             amount: 500,
             status: "confirmed".to_string(),
+            memo: None,
         };
         let saved = repo.save_donation(&anonymous_donation).unwrap();
         assert_eq!(saved.tx_hash, "anonymous456");
@@ -202,6 +204,7 @@ mod tests {
             donor_user_id: None,
             amount: 500,
             status: "confirmed".to_string(),
+            memo: None,
         };
         repo.save_donation(&anonymous_donation).unwrap();
 
@@ -231,6 +234,7 @@ mod tests {
             donor_user_id: None,
             amount: 500,
             status: "confirmed".to_string(),
+            memo: None,
         };
         repo.save_donation(&anonymous_donation).unwrap();
 

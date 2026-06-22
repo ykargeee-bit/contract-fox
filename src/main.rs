@@ -8,6 +8,7 @@ pub mod horizon;
 pub mod services;
 mod setup;
 pub mod utils;
+pub mod webhooks;
 
 fn main() {
     if let Err(err) = config::Config::from_env() {

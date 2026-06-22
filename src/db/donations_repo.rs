@@ -15,6 +15,7 @@ pub struct NewDonation {
     pub donor_user_id: Option<i64>,
     pub amount: u64,
     pub status: String,
+    pub memo: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -26,6 +27,7 @@ pub struct Donation {
     pub donor_user_id: Option<i64>,
     pub amount: u64,
     pub status: String,
+    pub memo: Option<String>,
     pub created_at: String,
 }
 
@@ -50,6 +52,7 @@ impl DonationsRepo {
                 donor_user_id    INTEGER,
                 amount          INTEGER NOT NULL,
                 status          TEXT    NOT NULL,
+                memo            TEXT,
                 created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )",
             [],
@@ -70,6 +73,7 @@ impl DonationsRepo {
                 donation.donor_user_id,
                 donation.amount,
                 donation.status,
+                donation.memo,
             ],
         )?;
 
@@ -164,6 +168,7 @@ mod tests {
             donor_user_id: Some(1),
             amount: 1000,
             status: "confirmed".to_string(),
+            memo: None,
         }
     }
 
@@ -241,6 +246,18 @@ mod tests {
         assert_eq!(saved.tx_hash, "abc123");
         assert_eq!(saved.amount, 1000);
         assert_eq!(saved.status, "confirmed");
+        assert_eq!(saved.memo, None);
+    }
+
+    #[test]
+    fn saves_donation_with_memo() {
+        let repo = in_memory_repo();
+        let d = NewDonation {
+            memo: Some("for my friend".to_string()),
+            ..sample()
+        };
+        let saved = repo.save_donation(&d).unwrap();
+        assert_eq!(saved.memo, Some("for my friend".to_string()));
     }
 
     #[test]

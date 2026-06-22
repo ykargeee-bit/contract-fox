@@ -17,14 +17,25 @@ use crate::{NetworkConfig, StellarAidError};
 /// * `campaign_id` - The ID of the campaign to donate to
 /// * `token_id` - The token contract address (native XLM address for native)
 /// * `amount` - The amount to donate
+/// * `memo` - Optional memo text (max 28 bytes per Stellar protocol)
 /// * `network` - Network configuration containing RPC and Horizon URLs
 pub fn build_donate_transaction(
     donor: &str,
     campaign_id: u64,
     token_id: &str,
     amount: i128,
+    memo: Option<&str>,
     network: &NetworkConfig,
 ) -> Result<String, StellarAidError> {
+    // Validate memo length up front (Stellar protocol: max 28 bytes)
+    if let Some(m) = memo {
+        if m.len() > 28 {
+            return Err(StellarAidError::ValidationError(
+                "Memo must not exceed 28 bytes".to_string(),
+            ));
+        }
+    }
+
     let seq_num = fetch_sequence_number(donor, network.horizon_url)
         .map_err(|e| StellarAidError::NetworkError(format!("Failed to fetch sequence: {}", e)))?;
 
@@ -113,6 +124,7 @@ fn build_donate_operations(
     campaign_id: u64,
     token_id_bytes: [u8; 32],
     amount: i128,
+    memo: Option<&str>,
     contract_id_bytes: [u8; 32],
 ) -> Result<Vec<Operation>, String> {
     let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
@@ -137,18 +149,26 @@ fn build_donate_operation(
     campaign_id: u64,
     token_id_bytes: [u8; 32],
     amount: i128,
+    memo: Option<&str>,
     contract_id: [u8; 32],
 ) -> Operation {
     let token_address = ScAddress::Contract(Hash(token_id_bytes));
 
+    // memo arg: ScVal::Void for None, ScVal::Bytes for Some
+    let memo_val = match memo {
+        None => ScVal::Void,
+        Some(m) => ScVal::Bytes(m.as_bytes().to_vec().try_into().unwrap_or_default()),
+    };
+
     let args = vec![
+        ScVal::Address(donor_address),
         ScVal::U64(campaign_id),
         ScVal::Address(token_address),
         ScVal::I128(Int128Parts {
             hi: (amount >> 64) as i64,
             lo: (amount & 0xFFFFFFFFFFFFFFFF) as u64,
         }),
-        ScVal::Address(donor_address),
+        memo_val,
     ];
 
     let invoke_args = InvokeContractArgs {
@@ -169,8 +189,6 @@ fn build_donate_operation(
     }
 }
 
-/// Builds a token approval operation for custom Soroban tokens.
-/// This creates an operation that approves the donation contract to spend tokens via transfer_from.
 fn build_approve_operation(
     donor_address: ScAddress,
     token_id_bytes: [u8; 32],
@@ -207,14 +225,23 @@ fn build_approve_operation(
 }
 
 /// Prepares a transaction for donating custom Soroban tokens to a campaign.
-/// This builds both the token approval and donation invocation operations.
+/// Builds both token approval and donation invocation operations.
 pub fn build_custom_token_donate_transaction(
     donor: &str,
     campaign_id: u64,
     token_id: &str,
     amount: i128,
+    memo: Option<&str>,
     network: &NetworkConfig,
 ) -> Result<String, StellarAidError> {
+    if let Some(m) = memo {
+        if m.len() > 28 {
+            return Err(StellarAidError::ValidationError(
+                "Memo must not exceed 28 bytes".to_string(),
+            ));
+        }
+    }
+
     let seq_num = fetch_sequence_number(donor, network.horizon_url)
         .map_err(|e| StellarAidError::NetworkError(format!("Failed to fetch sequence: {}", e)))?;
 

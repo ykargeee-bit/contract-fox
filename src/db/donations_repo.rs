@@ -14,6 +14,7 @@ pub struct NewDonation {
     pub donor_address: String,
     pub amount: u64,
     pub status: String,
+    pub memo: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -24,6 +25,7 @@ pub struct Donation {
     pub donor_address: String,
     pub amount: u64,
     pub status: String,
+    pub memo: Option<String>,
     pub created_at: String,
 }
 
@@ -47,6 +49,7 @@ impl DonationsRepo {
                 donor_address   TEXT    NOT NULL,
                 amount          INTEGER NOT NULL,
                 status          TEXT    NOT NULL,
+                memo            TEXT,
                 created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );",
         )?;
@@ -57,19 +60,20 @@ impl DonationsRepo {
     pub fn save_donation(&self, donation: &NewDonation) -> Result<Donation, DbError> {
         self.conn.execute(
             "INSERT OR IGNORE INTO donations
-                (tx_hash, campaign_id, donor_address, amount, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                (tx_hash, campaign_id, donor_address, amount, status, memo, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
             params![
                 donation.tx_hash,
                 donation.campaign_id,
                 donation.donor_address,
                 donation.amount,
                 donation.status,
+                donation.memo,
             ],
         )?;
 
         let record = self.conn.query_row(
-            "SELECT id, tx_hash, campaign_id, donor_address, amount, status, created_at
+            "SELECT id, tx_hash, campaign_id, donor_address, amount, status, memo, created_at
              FROM donations WHERE tx_hash = ?1",
             params![donation.tx_hash],
             |row| {
@@ -80,7 +84,8 @@ impl DonationsRepo {
                     donor_address: row.get(3)?,
                     amount: row.get(4)?,
                     status: row.get(5)?,
-                    created_at: row.get(6)?,
+                    memo: row.get(6)?,
+                    created_at: row.get(7)?,
                 })
             },
         )?;
@@ -104,6 +109,7 @@ mod tests {
             donor_address: "GABC...".to_string(),
             amount: 1000,
             status: "confirmed".to_string(),
+            memo: None,
         }
     }
 
@@ -114,6 +120,18 @@ mod tests {
         assert_eq!(saved.tx_hash, "abc123");
         assert_eq!(saved.amount, 1000);
         assert_eq!(saved.status, "confirmed");
+        assert_eq!(saved.memo, None);
+    }
+
+    #[test]
+    fn saves_donation_with_memo() {
+        let repo = in_memory_repo();
+        let d = NewDonation {
+            memo: Some("for my friend".to_string()),
+            ..sample()
+        };
+        let saved = repo.save_donation(&d).unwrap();
+        assert_eq!(saved.memo, Some("for my friend".to_string()));
     }
 
     #[test]

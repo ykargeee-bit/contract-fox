@@ -1,9 +1,7 @@
 #![no_std]
 
 use contracts_shared::{Campaign, CampaignStatus};
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
-};
+use soroban_sdk::{Address, Env, Symbol, Vec, contract, contractimpl, contracttype, symbol_short};
 
 const CAMPAIGN_TTL_THRESHOLD_LEDGERS: u32 = 17280 * 7;
 const CAMPAIGN_TTL_BUMP_TO_LEDGERS: u32 = 17280 * 30;
@@ -151,7 +149,13 @@ impl CampaignContract {
     ///
     /// # Returns
     /// The ID of newly created campaign
-    pub fn register_campaign(env: Env, owner: Address, goal: i128, deadline: u64, asset_contract_id: Option<Address>) -> u64 {
+    pub fn register_campaign(
+        env: Env,
+        owner: Address,
+        goal: i128,
+        deadline: u64,
+        asset_contract_id: Option<Address>,
+    ) -> u64 {
         require_not_paused(&env);
         owner.require_auth();
 

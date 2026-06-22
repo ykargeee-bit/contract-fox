@@ -109,9 +109,7 @@ fn parse_soroban_invocation(
         .unwrap_or("")
         .to_string();
 
-    let campaign_id = invocation
-        .get("campaign_id")
-        .and_then(|v| v.as_u64())?;
+    let campaign_id = invocation.get("campaign_id").and_then(|v| v.as_u64())?;
 
     let amount = invocation
         .get("amount")

@@ -1,7 +1,10 @@
 #![no_std]
 
 use contracts_shared::Withdrawal;
-use soroban_sdk::{Address, Env, Map, String, Symbol, Vec, contract, contractimpl, contracttype, symbol_short, token};
+use soroban_sdk::{
+    Address, Env, Map, String, Symbol, Vec, contract, contractimpl, contracttype, symbol_short,
+    token,
+};
 
 const PAUSED: Symbol = symbol_short!("PAUSED");
 const ADMIN: Symbol = symbol_short!("ADMIN");
@@ -80,7 +83,13 @@ pub struct WithdrawalContract;
 #[contractimpl]
 impl WithdrawalContract {
     /// Initialize withdrawal settings, token ID, and admin address
-    pub fn initialize(env: Env, beneficiary: Address, max_withdrawal: i128, token_id: Address, admin: Address) {
+    pub fn initialize(
+        env: Env,
+        beneficiary: Address,
+        max_withdrawal: i128,
+        token_id: Address,
+        admin: Address,
+    ) {
         let key = Symbol::new(&env, "settings");
         env.storage()
             .instance()
@@ -129,12 +138,12 @@ impl WithdrawalContract {
             .instance()
             .get(&CAMPAIGN_INDEX)
             .unwrap_or(Map::new(&env));
-        let mut ids: Vec<u64> = campaign_index
-            .get(campaign_id)
-            .unwrap_or(Vec::new(&env));
+        let mut ids: Vec<u64> = campaign_index.get(campaign_id).unwrap_or(Vec::new(&env));
         ids.push_back(count);
         campaign_index.set(campaign_id, ids);
-        env.storage().instance().set(&CAMPAIGN_INDEX, &campaign_index);
+        env.storage()
+            .instance()
+            .set(&CAMPAIGN_INDEX, &campaign_index);
 
         env.events().publish(
             (Symbol::new(&env, "WithdrawalRequested"), campaign_id),
@@ -339,11 +348,16 @@ mod test {
     use super::*;
     use soroban_sdk::{testutils::Address as _, token::Client as TokenClient};
 
-    fn setup(env: &Env, max_withdrawal: i128) -> (WithdrawalContractClient, Address, Address, Address) {
+    fn setup(
+        env: &Env,
+        max_withdrawal: i128,
+    ) -> (WithdrawalContractClient, Address, Address, Address) {
         let contract_id = env.register_contract(None, WithdrawalContract);
         let client = WithdrawalContractClient::new(env, &contract_id);
 
-        let token_id = env.register_stellar_asset_contract_v2(Address::generate(env)).address();
+        let token_id = env
+            .register_stellar_asset_contract_v2(Address::generate(env))
+            .address();
         let beneficiary = Address::generate(env);
         let admin = Address::generate(env);
 
@@ -411,8 +425,7 @@ mod test {
         let admin = Address::generate(&env);
         let campaign_id = 1u64;
 
-        let withdrawal_id =
-            client.request_withdrawal(&campaign_id, &owner, &300i128, &recipient);
+        let withdrawal_id = client.request_withdrawal(&campaign_id, &owner, &300i128, &recipient);
         client.approve_withdrawal(&withdrawal_id, &admin);
 
         let withdrawal = client.get_withdrawal(&withdrawal_id);
@@ -432,9 +445,12 @@ mod test {
         let admin = Address::generate(&env);
         let campaign_id = 1u64;
 
-        let withdrawal_id =
-            client.request_withdrawal(&campaign_id, &owner, &300i128, &recipient);
-        client.reject_withdrawal(&withdrawal_id, &admin, &String::from_str(&env, "Insufficient funds"));
+        let withdrawal_id = client.request_withdrawal(&campaign_id, &owner, &300i128, &recipient);
+        client.reject_withdrawal(
+            &withdrawal_id,
+            &admin,
+            &String::from_str(&env, "Insufficient funds"),
+        );
 
         let withdrawal = client.get_withdrawal(&withdrawal_id);
         assert!(!withdrawal.approved);
@@ -452,7 +468,10 @@ mod test {
         assert!(client.withdraw(&200i128));
         assert_eq!(client.get_total_withdrawn(), 200i128);
 
-        assert_eq!(TokenClient::new(&env, &token_id).balance(&beneficiary), 200i128);
+        assert_eq!(
+            TokenClient::new(&env, &token_id).balance(&beneficiary),
+            200i128
+        );
     }
 
     #[test]

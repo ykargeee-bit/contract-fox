@@ -69,10 +69,7 @@ impl DonationStatus {
             (DonationStatus::Confirming, DonationEvent::Confirm) => Ok(DonationStatus::Confirmed),
             (DonationStatus::Confirming, DonationEvent::Fail) => Ok(DonationStatus::Failed),
             (DonationStatus::Failed, DonationEvent::Refund) => Ok(DonationStatus::Refunded),
-            _ => Err(TransitionError::InvalidTransition {
-                from: self,
-                event,
-            }),
+            _ => Err(TransitionError::InvalidTransition { from: self, event }),
         }
     }
 }

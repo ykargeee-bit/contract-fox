@@ -39,8 +39,14 @@ mod tests {
     fn test_validate_donation_amount() {
         assert!(validate_donation_amount(100).is_ok());
         assert!(validate_donation_amount(1).is_ok());
-        assert_eq!(validate_donation_amount(0), Err("Donation amount must be positive"));
-        assert_eq!(validate_donation_amount(-100), Err("Donation amount must be positive"));
+        assert_eq!(
+            validate_donation_amount(0),
+            Err("Donation amount must be positive")
+        );
+        assert_eq!(
+            validate_donation_amount(-100),
+            Err("Donation amount must be positive")
+        );
     }
 
     #[test]

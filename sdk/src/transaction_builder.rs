@@ -1,10 +1,10 @@
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use soroban_sdk::xdr::{
-    AccountId, Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp,
-    Memo, MuxedAccount, Operation, OperationBody, Preconditions, PublicKey, ScAddress, ScSymbol,
-    ScVal, SequenceNumber, SorobanTransactionData, Transaction, TransactionEnvelope,
-    TransactionExt, TransactionV1Envelope, Uint256, WriteXdr, Int128Parts,
+    AccountId, Hash, HostFunction, Int128Parts, InvokeContractArgs, InvokeHostFunctionOp, Memo,
+    MuxedAccount, Operation, OperationBody, Preconditions, PublicKey, ScAddress, ScSymbol, ScVal,
+    SequenceNumber, SorobanTransactionData, Transaction, TransactionEnvelope, TransactionExt,
+    TransactionV1Envelope, Uint256, WriteXdr,
 };
 use stellar_strkey::ed25519::PublicKey as StrkeyPublicKey;
 
@@ -28,14 +28,20 @@ pub fn build_donate_transaction(
     let seq_num = fetch_sequence_number(donor, network.horizon_url)
         .map_err(|e| StellarAidError::NetworkError(format!("Failed to fetch sequence: {}", e)))?;
 
-    let contract_id_str = std::env::var("DONATION_CONTRACT_ID").unwrap_or_else(|_| "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string());
+    let contract_id_str = std::env::var("DONATION_CONTRACT_ID")
+        .unwrap_or_else(|_| "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string());
     let contract_id_bytes = parse_contract_id(&contract_id_str)?;
     let token_id_bytes = parse_contract_id(token_id)?;
-    let donor_pubkey = parse_account_id(donor)
-        .map_err(|e| StellarAidError::ValidationError(e))?;
+    let donor_pubkey = parse_account_id(donor).map_err(|e| StellarAidError::ValidationError(e))?;
 
-    let operations = build_donate_operations(donor_pubkey, campaign_id, token_id_bytes, amount, contract_id_bytes)
-        .map_err(|e| StellarAidError::ValidationError(e))?;
+    let operations = build_donate_operations(
+        donor_pubkey,
+        campaign_id,
+        token_id_bytes,
+        amount,
+        contract_id_bytes,
+    )
+    .map_err(|e| StellarAidError::ValidationError(e))?;
 
     let mut tx = Transaction {
         source_account: MuxedAccount::Ed25519(Uint256(donor_pubkey)),
@@ -52,18 +58,25 @@ pub fn build_donate_transaction(
         signatures: vec![].try_into().unwrap(),
     });
 
-    let base64_tx = envelope
-        .to_xdr_base64()
-        .map_err(|_| StellarAidError::TransactionFailed("Failed to encode tx to base64".to_string()))?;
+    let base64_tx = envelope.to_xdr_base64().map_err(|_| {
+        StellarAidError::TransactionFailed("Failed to encode tx to base64".to_string())
+    })?;
 
-    let (min_fee, soroban_data, auth_entries) = simulate_transaction(&base64_tx, network.soroban_rpc_url)
-        .map_err(|e| StellarAidError::SorobanError { code: -1, message: e })?;
+    let (min_fee, soroban_data, auth_entries) =
+        simulate_transaction(&base64_tx, network.soroban_rpc_url).map_err(|e| {
+            StellarAidError::SorobanError {
+                code: -1,
+                message: e,
+            }
+        })?;
 
     tx.fee = min_fee as u32 + 100;
     tx.ext = TransactionExt::V1(soroban_data);
 
-    let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(donor_pubkey))));
-    
+    let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+        donor_pubkey,
+    ))));
+
     for (i, auth_entry) in auth_entries.iter().enumerate() {
         if let Some(op) = tx.operations.get(i) {
             if let OperationBody::InvokeHostFunction(mut invoke_op) = op.body.clone() {
@@ -78,9 +91,9 @@ pub fn build_donate_transaction(
         signatures: vec![].try_into().unwrap(),
     });
 
-    final_envelope
-        .to_xdr_base64()
-        .map_err(|_| StellarAidError::TransactionFailed("Failed to encode final tx to base64".to_string()))
+    final_envelope.to_xdr_base64().map_err(|_| {
+        StellarAidError::TransactionFailed("Failed to encode final tx to base64".to_string())
+    })
 }
 
 fn parse_account_id(address: &str) -> Result<[u8; 32], String> {
@@ -102,11 +115,19 @@ fn build_donate_operations(
     amount: i128,
     contract_id_bytes: [u8; 32],
 ) -> Result<Vec<Operation>, String> {
-    let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(donor_pubkey))));
+    let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+        donor_pubkey,
+    ))));
     let contract_address = ScAddress::Contract(Hash(contract_id_bytes));
     let token_address = ScAddress::Contract(Hash(token_id_bytes));
 
-    let donate_op = build_donate_operation(donor_address.clone(), campaign_id, token_id_bytes, amount, contract_id_bytes);
+    let donate_op = build_donate_operation(
+        donor_address.clone(),
+        campaign_id,
+        token_id_bytes,
+        amount,
+        contract_id_bytes,
+    );
 
     Ok(vec![donate_op])
 }
@@ -197,16 +218,29 @@ pub fn build_custom_token_donate_transaction(
     let seq_num = fetch_sequence_number(donor, network.horizon_url)
         .map_err(|e| StellarAidError::NetworkError(format!("Failed to fetch sequence: {}", e)))?;
 
-    let contract_id_str = std::env::var("DONATION_CONTRACT_ID").unwrap_or_else(|_| "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string());
+    let contract_id_str = std::env::var("DONATION_CONTRACT_ID")
+        .unwrap_or_else(|_| "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string());
     let contract_id_bytes = parse_contract_id(&contract_id_str)?;
     let token_id_bytes = parse_contract_id(token_id)?;
-    let donor_pubkey = parse_account_id(donor)
-        .map_err(|e| StellarAidError::ValidationError(e))?;
+    let donor_pubkey = parse_account_id(donor).map_err(|e| StellarAidError::ValidationError(e))?;
 
-    let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(donor_pubkey))));
+    let donor_address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+        donor_pubkey,
+    ))));
 
-    let approve_op = build_approve_operation(donor_address.clone(), token_id_bytes, amount, contract_id_bytes);
-    let donate_op = build_donate_operation(donor_address, campaign_id, token_id_bytes, amount, contract_id_bytes);
+    let approve_op = build_approve_operation(
+        donor_address.clone(),
+        token_id_bytes,
+        amount,
+        contract_id_bytes,
+    );
+    let donate_op = build_donate_operation(
+        donor_address,
+        campaign_id,
+        token_id_bytes,
+        amount,
+        contract_id_bytes,
+    );
 
     let operations = vec![approve_op, donate_op];
 
@@ -225,12 +259,17 @@ pub fn build_custom_token_donate_transaction(
         signatures: vec![].try_into().unwrap(),
     });
 
-    let base64_tx = envelope
-        .to_xdr_base64()
-        .map_err(|_| StellarAidError::TransactionFailed("Failed to encode tx to base64".to_string()))?;
+    let base64_tx = envelope.to_xdr_base64().map_err(|_| {
+        StellarAidError::TransactionFailed("Failed to encode tx to base64".to_string())
+    })?;
 
-    let (min_fee, soroban_data, auth_entries) = simulate_transaction(&base64_tx, network.soroban_rpc_url)
-        .map_err(|e| StellarAidError::SorobanError { code: -1, message: e })?;
+    let (min_fee, soroban_data, auth_entries) =
+        simulate_transaction(&base64_tx, network.soroban_rpc_url).map_err(|e| {
+            StellarAidError::SorobanError {
+                code: -1,
+                message: e,
+            }
+        })?;
 
     tx.fee = min_fee as u32 + 100;
     tx.ext = TransactionExt::V1(soroban_data);
@@ -249,9 +288,9 @@ pub fn build_custom_token_donate_transaction(
         signatures: vec![].try_into().unwrap(),
     });
 
-    final_envelope
-        .to_xdr_base64()
-        .map_err(|_| StellarAidError::TransactionFailed("Failed to encode final tx to base64".to_string()))
+    final_envelope.to_xdr_base64().map_err(|_| {
+        StellarAidError::TransactionFailed("Failed to encode final tx to base64".to_string())
+    })
 }
 
 fn fetch_sequence_number(address: &str, horizon_url: &str) -> Result<i64, String> {
@@ -268,7 +307,17 @@ fn fetch_sequence_number(address: &str, horizon_url: &str) -> Result<i64, String
     seq_str.parse::<i64>().map_err(|e| e.to_string())
 }
 
-fn simulate_transaction(base64_tx: &str, rpc_url: &str) -> Result<(i64, SorobanTransactionData, Vec<soroban_sdk::xdr::SorobanAuthorizationEntry>), String> {
+fn simulate_transaction(
+    base64_tx: &str,
+    rpc_url: &str,
+) -> Result<
+    (
+        i64,
+        SorobanTransactionData,
+        Vec<soroban_sdk::xdr::SorobanAuthorizationEntry>,
+    ),
+    String,
+> {
     let client = Client::new();
     let payload = json!({
         "jsonrpc": "2.0",
@@ -279,25 +328,33 @@ fn simulate_transaction(base64_tx: &str, rpc_url: &str) -> Result<(i64, SorobanT
         }
     });
 
-    let resp = client.post(rpc_url).json(&payload).send().map_err(|e| e.to_string())?;
+    let resp = client
+        .post(rpc_url)
+        .json(&payload)
+        .send()
+        .map_err(|e| e.to_string())?;
     let rpc_res: Value = resp.json().map_err(|e| e.to_string())?;
 
     if let Some(err) = rpc_res.get("error") {
         return Err(err.to_string());
     }
 
-    let result = rpc_res.get("result").ok_or("Missing result in RPC response")?;
+    let result = rpc_res
+        .get("result")
+        .ok_or("Missing result in RPC response")?;
 
     if let Some(err) = result.get("error") {
         return Err(format!("Simulation failed: {}", err));
     }
 
-    let min_fee = result["minResourceFee"].as_str()
+    let min_fee = result["minResourceFee"]
+        .as_str()
         .unwrap_or("0")
         .parse::<i64>()
         .unwrap_or(0);
 
-    let transaction_data_b64 = result["transactionData"].as_str()
+    let transaction_data_b64 = result["transactionData"]
+        .as_str()
         .ok_or("Missing transactionData in simulation result")?;
 
     let soroban_data = SorobanTransactionData::from_xdr_base64(transaction_data_b64)
@@ -309,8 +366,9 @@ fn simulate_transaction(base64_tx: &str, rpc_url: &str) -> Result<(i64, SorobanT
             if let Some(auth_array) = first_result.get("auth").and_then(|a| a.as_array()) {
                 for auth_val in auth_array {
                     if let Some(auth_b64) = auth_val.as_str() {
-                        let entry = soroban_sdk::xdr::SorobanAuthorizationEntry::from_xdr_base64(auth_b64)
-                            .map_err(|_| "Failed to parse auth entry XDR")?;
+                        let entry =
+                            soroban_sdk::xdr::SorobanAuthorizationEntry::from_xdr_base64(auth_b64)
+                                .map_err(|_| "Failed to parse auth entry XDR")?;
                         auth_entries.push(entry);
                     }
                 }
